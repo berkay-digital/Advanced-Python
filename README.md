@@ -2,7 +2,7 @@
 
 This repository contains materials and code from a series of Python classes. The classes are organized into folders, each folder corresponds to a specific class session. Below are the links to each class folder:
 
-- [Week 1](Week 1/)
+- [Week 1](Week 1)
 
 ## Description
 
