@@ -4,6 +4,7 @@ This repository contains materials and code from a series of Python classes. The
 
 - [Week 1](./Week%201)
 - [Week 2](./Week%202)
+- [Week 3](./Week%203)
 
 ## Description
 
