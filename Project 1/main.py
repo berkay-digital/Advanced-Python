@@ -1,7 +1,9 @@
 import re
 import math
 import random
-from typing import Dict, List, Tuple
+import matplotlib.pyplot as plt
+import time
+from typing import Dict, List, Tuple, Optional
 
 #random.seed(42)
 
@@ -40,24 +42,31 @@ def generate_random_solution(cities: Dict) -> List[int]:
     return city_ids
 
 def calculate_distance_matrix(cities: Dict) -> Dict[Tuple[int, int], float]:
+    coords = {city_id: (data['x_location'], data['y_location']) 
+             for city_id, data in cities.items()}
+    
     distance_matrix = {}
-    for i in cities:
-        for j in cities:
-            if i != j and (j, i) not in distance_matrix:
-                distance_matrix[(i, j)] = calculate_distance(cities[i], cities[j])
-                distance_matrix[(j, i)] = distance_matrix[(i, j)]
+    city_ids = list(cities.keys())
+    
+    for i in range(len(city_ids)):
+        x1, y1 = coords[city_ids[i]]
+        for j in range(i + 1, len(city_ids)):
+            x2, y2 = coords[city_ids[j]]
+            dist = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+            distance_matrix[(city_ids[i], city_ids[j])] = dist
+            distance_matrix[(city_ids[j], city_ids[i])] = dist
+    
     return distance_matrix
 
 def calculate_route_distance(route: List[int], cities: Dict, distance_matrix: Dict[Tuple[int, int], float]) -> float:
-    total_distance = 0
-    for i in range(len(route)):
-        city1, city2 = route[i], route[(i + 1) % len(route)]
-        total_distance += distance_matrix[(city1, city2)]
-    return total_distance
+    get_distance = distance_matrix.get
+    return sum(get_distance((route[i], route[(i + 1) % len(route)])) 
+              for i in range(len(route)))
 
 def tournament_selection(population: List[List[int]], cities: Dict, distance_matrix: Dict[Tuple[int, int], float], tournament_size: int = 5) -> List[int]:
     tournament = random.sample(population, tournament_size)
-    return min(tournament, key=lambda x: calculate_route_distance(x, cities, distance_matrix))
+    return min(tournament, 
+              key=lambda x: calculate_route_distance(x, cities, distance_matrix))
 
 def order_crossover(parent1: List[int], parent2: List[int]) -> List[int]:
     size = len(parent1)
@@ -81,31 +90,62 @@ def swap_mutation(solution: List[int], mutation_rate: float) -> List[int]:
         solution[i], solution[j] = solution[j], solution[i]
     return solution
 
-def genetic_algorithm(cities: Dict, population_size: int = 200, generations: int = 2000,
-                     elite_size: int = 20, tournament_size: int = 5) -> Tuple[List[int], float]:
+def inversion_mutation(solution: List[int], mutation_rate: float) -> List[int]:
+    if random.random() < mutation_rate:
+        i, j = sorted(random.sample(range(len(solution)), 2))
+        solution[i:j+1] = reversed(solution[i:j+1])
+    return solution
 
-    distance_matrix = calculate_distance_matrix(cities)
+def create_new_population(pop_size: int, cities: Dict, distance_matrix: Dict[Tuple[int, int], float], 
+                         tournament_size: int, mutation_rate: float) -> List[List[int]]:
+    population = [generate_random_solution(cities) for _ in range(pop_size)]
     
-    population = [generate_random_solution(cities) for _ in range(population_size)]
+    new_population = []
+    while len(new_population) < pop_size:
+        p1 = tournament_selection(population, cities, distance_matrix, tournament_size)
+        p2 = tournament_selection(population, cities, distance_matrix, tournament_size)
+        
+        offspring = order_crossover(p1, p2)
+        
+        if random.random() < 0.5:
+            offspring = swap_mutation(offspring, mutation_rate)
+        else:
+            offspring = inversion_mutation(offspring, mutation_rate)
+            
+        new_population.append(offspring)
+    
+    return new_population
+
+def genetic_algorithm(cities: Dict, population_size: int = 200, generations: int = 2000,
+                     elite_size: int = 20, tournament_size: int = 5) -> Tuple[List[int], float, List[float], float]:
+    start_time = time.time()
+    
+    distance_matrix = calculate_distance_matrix(cities)
     mutation_rate = 1.0 / len(cities)
+    
+    population = create_new_population(population_size, cities, distance_matrix, tournament_size, 
+                                     mutation_rate)
+    best_distances_history = []
+    best_distances_history.extend([0] * generations)
+    
+    route_distances = {}
+    route_key = tuple
     
     best_distance = float('inf')
     best_route = None
     
-
-    route_distances = {}
-    
     for gen in range(generations):
+        new_routes = set(route_key(route) for route in population 
+                        if route_key(route) not in route_distances)
+        for route_tuple in new_routes:
+            route_distances[route_tuple] = calculate_route_distance(list(route_tuple), 
+                                                                 cities, distance_matrix)
 
-        for route in population:
-            route_tuple = tuple(route)
-            if route_tuple not in route_distances:
-                route_distances[route_tuple] = calculate_route_distance(route, cities, distance_matrix)
+        population.sort(key=lambda x: route_distances[route_key(x)])
         
-
-        population.sort(key=lambda x: route_distances[tuple(x)])
+        current_best_distance = route_distances[route_key(population[0])]
+        best_distances_history[gen] = current_best_distance
         
-        current_best_distance = route_distances[tuple(population[0])]
         if current_best_distance < best_distance:
             best_distance = current_best_distance
             best_route = population[0].copy()
@@ -113,49 +153,152 @@ def genetic_algorithm(cities: Dict, population_size: int = 200, generations: int
         if gen % 100 == 0:
             print(f"Generation {gen}: Distance = {best_distance:.2f}")
         
-        new_population = []
-        new_population.extend([x.copy() for x in population[:elite_size]])
+        new_population = [None] * population_size
         
-        while len(new_population) < population_size:
+        for i in range(elite_size):
+            new_population[i] = population[i].copy()
+        
+        for i in range(elite_size, population_size):
             parent1 = tournament_selection(population, cities, distance_matrix, tournament_size)
             parent2 = tournament_selection(population, cities, distance_matrix, tournament_size)
             child = order_crossover(parent1, parent2)
-            child = swap_mutation(child, mutation_rate)
-            new_population.append(child)
+            
+            if random.random() < 0.5:
+                child = swap_mutation(child, mutation_rate)
+            else:
+                child = inversion_mutation(child, mutation_rate)
+                
+            new_population[i] = child
         
         population = new_population
         
         if len(route_distances) > population_size * 2:
-            new_cache = {}
-            for route in population:
-                route_tuple = tuple(route)
-                new_cache[route_tuple] = calculate_route_distance(route, cities, distance_matrix)
-            route_distances = new_cache
+            current_routes = set(route_key(route) for route in population)
+            route_distances = {k: v for k, v in route_distances.items() 
+                             if k in current_routes}
 
-    return best_route, best_distance
+    execution_time = time.time() - start_time
+    return best_route, best_distance, best_distances_history, execution_time
+
+def plot_performance(distances_history: List[float], title: str, figure_num: int, execution_time: float):
+    fig = plt.figure(figure_num, figsize=(10, 6))
+    plt.clf()
+    
+    color = '#0077BB'
+    plt.plot(distances_history, color=color, linewidth=2, 
+            label=f'Execution time: {execution_time:.2f}s')
+    
+    final_value = distances_history[-1]
+    plt.plot(len(distances_history)-1, final_value, 'o', color=color)
+    plt.annotate(f'Final: {final_value:.2f}', 
+                xy=(len(distances_history)-1, final_value),
+                xytext=(10, 10), textcoords='offset points')
+    
+    plt.title(f'Best Distance Over Generations - {title}')
+    plt.xlabel('Generation')
+    plt.ylabel('Distance')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.draw()
+    plt.pause(0.5)
+    return fig
+
+def compare_parameters(cities: Dict, parameter_sets: List[Dict], 
+                      generations: int = 2000, figure_num: int = None) -> None:
+    colors = ['#0077BB', '#EE7733', '#009988',
+             '#CC3311', '#33BBEE', '#EE3377']
+    
+    fig = plt.figure(figure_num, figsize=(12, 6))
+    plt.clf()
+    
+    all_histories = []
+    all_labels = []
+    
+    for idx, params in enumerate(parameter_sets):
+        best_route, best_distance, history, exec_time = genetic_algorithm(
+            cities=cities,
+            generations=generations,
+            **params
+        )
+        
+        final_value = history[-1]
+        label = f"Pop:{params['population_size']}, Elite:{params['elite_size']}, Tour:{params['tournament_size']} (Final: {final_value:.2f}, Time: {exec_time:.2f}s)"
+        
+        all_histories.append((history, final_value))
+        all_labels.append(label)
+        
+        plt.clf()
+        for j in range(len(all_histories)):
+            h, fv = all_histories[j]
+            plt.plot(h, color=colors[j % len(colors)], 
+                    label=all_labels[j], linewidth=2)
+            plt.plot(len(h)-1, fv, 'o', 
+                    color=colors[j % len(colors)])
+        
+        plt.title('Parameter Comparison')
+        plt.xlabel('Generation')
+        plt.ylabel('Best Distance')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.draw()
+        plt.pause(0.5)
+    
+    return fig
 
 def main():
-    files = ['Project 1/kroA100.tsp', 'Project 1/berlin52.tsp', 'Project 1/berlin11_modified.tsp']
+    plt.ion()
+    plt.close('all')
     
-    for file in files:
+    files = ['Project 1/berlin11_modified.tsp', 'Project 1/berlin52.tsp', 'Project 1/kroA100.tsp']
+    
+    parameter_sets = [
+        {'population_size': 200, 'elite_size': 20, 'tournament_size': 2},
+        {'population_size': 200, 'elite_size': 20, 'tournament_size': 3},
+        {'population_size': 200, 'elite_size': 20, 'tournament_size': 4},
+    ]
+    
+    figures = {}
+    
+    for file_idx, file in enumerate(files):
         print(f"\nProcessing file: {file}")
         print("-" * 50)
         
         cities, metadata = parse_tsp_file(file)
         print(f"Number of cities: {len(cities)}")
         
-        best_route, best_distance = genetic_algorithm(
+        best_route, best_distance, history, exec_time = genetic_algorithm(
             cities=cities,
             population_size=200,
             generations=2000,
             elite_size=20,
-            tournament_size=4
+            tournament_size=3 
         )
         
         print(f"\nBest solution found:")
         print(f"Total distance: {best_distance:.2f}")
         print(f"Route: {best_route}")
+        print(f"Execution time: {exec_time:.2f} seconds")
+        
+        perf_fig_num = file_idx * 2 + 1
+        figures[f'perf_{file_idx}'] = plot_performance(history, f"File: {file}", 
+                                                      figure_num=perf_fig_num, 
+                                                      execution_time=exec_time)
+        
+        print("\nComparing different parameter sets...")
+        comp_fig_num = file_idx * 2 + 2
+        figures[f'comp_{file_idx}'] = compare_parameters(cities, parameter_sets, 
+                                                       figure_num=comp_fig_num)
+        
         print("\n" + "="*50)
+    
+    for fig_name, fig in figures.items():
+        plt.figure(fig.number)
+        plt.tight_layout()
+        plt.draw()
+    
+    plt.show(block=True)
 
 if __name__ == "__main__":
     main()
